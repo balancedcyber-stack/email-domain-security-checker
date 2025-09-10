@@ -1,0 +1,115 @@
+<!-- Email Domain Security Checker Widget (unbranded) -->
+<section id="email-checker" class="bc-checker section">
+  <style>
+    :root{ --bc-blue:#0B5FFF; --bc-surface:#F7F9FC; --bc-text:#111; --radius:16px; --shadow:0 6px 20px rgba(0,0,0,.06) }
+    .bc-checker{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;max-width:980px;margin:0 auto}
+    .bc-card{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:20px}
+    .bc-title{margin:6px 0 10px 0}
+    .bc-lead{color:#333;margin:0 0 12px 0;line-height:1.45}
+
+    .bc-row{ display:flex !important; align-items:center; gap:12px; margin:10px 0 6px }
+    .bc-row input{ flex:1 1 auto; min-width:0; width:auto; padding:12px 14px; border:1px solid #e3e6ea; border-radius:12px; font-size:15px; box-sizing:border-box }
+    .bc-row .bc-btn{ flex:0 0 auto }
+    .bc-btn{ background:var(--bc-blue); color:#fff; border:none; border-radius:999px; padding:.8rem 1.25rem; font-weight:600; cursor:pointer }
+    .bc-btn[disabled]{ opacity:.6; cursor:not-allowed }
+    .bc-note{ color:#555; font-size:.9rem; margin-top:6px }
+    .bc-overall{ margin:14px 0 8px 0; color:#444 }
+    .PASS{ color:#0E8A00; font-weight:600 } .WARN{ color:#B8860B; font-weight:600 } .FAIL{ color:#B00020; font-weight:600 }
+
+    table{ width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; margin-top:8px }
+    thead th{ background:var(--bc-surface); text-align:left; font-weight:600; border-top:1px solid #eef1f4; border-bottom:1px solid #eef1f4 }
+    th,td{ padding:10px 12px; vertical-align:top }
+    tbody tr:nth-child(odd){ background:#fafbfd }
+    tbody tr:nth-child(even){ background:#fff }
+    tbody td, thead th{ border-left:1px solid #eef1f4; border-right:1px solid #eef1f4 }
+    th:nth-child(1){ width:120px } th:nth-child(2){ width:90px } th:nth-child(3), th:nth-child(4){ width:auto }
+    td:nth-child(3), td:nth-child(4){ word-break:break-word; overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.35; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px }
+
+    @media (max-width:520px){
+      .bc-card{ padding:16px }
+      .bc-row{ flex-direction:column; align-items:stretch; gap:10px }
+      .bc-row .bc-btn{ width:100% }
+      th:nth-child(1){ width:96px } th:nth-child(2){ width:84px }
+      td,th{ padding:8px 10px }
+    }
+  </style>
+
+  <div class="bc-card">
+    <h2 class="bc-title">Email Domain Security Check</h2>
+    <p class="bc-lead">Check your domain’s SPF, DKIM and DMARC in seconds. This tool only reads public DNS.</p>
+
+    <div class="bc-row">
+      <input id="bc-domain" type="text" placeholder="yourdomain.com" aria-label="Domain">
+      <button id="bc-scan" class="bc-btn">Run check</button>
+    </div>
+    <div class="bc-note">Tip: For Microsoft 365, DKIM selectors are usually <code>selector1</code> and <code>selector2</code>.</div>
+
+    <div id="bc-results" style="display:none">
+      <div class="bc-overall" id="bc-overall"></div>
+      <table role="table" aria-label="Email security results">
+        <thead>
+          <tr><th>Control</th><th>Status</th><th>Detail</th><th>Recommended Fix</th></tr>
+        </thead>
+        <tbody id="bc-body"></tbody>
+      </table>
+    </div>
+
+    <div id="bc-error" class="bc-note" style="display:none" aria-live="polite"></div>
+  </div>
+
+  <script>
+    const btn   = document.getElementById("bc-scan");
+    const input = document.getElementById("bc-domain");
+    const out   = document.getElementById("bc-results");
+    const body  = document.getElementById("bc-body");
+    const meta  = document.getElementById("bc-overall");
+    const errEl = document.getElementById("bc-error");
+
+    // Default: same-origin Worker mounted on /scan
+    // If you use a custom subdomain, change to: const API = "https://scan.<YOUR_DOMAIN>/scan"
+    const API = "/scan";
+
+    function validDomain(d){ return /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(d); }
+    function esc(s){ return (s||"").replace(/</g,"&lt;"); }
+    function clean(s){ return (s||"").replace(/\\\d{3}/g," ").replace(/\s{2,}/g," ").trim(); }
+
+    btn.addEventListener("click", async () => {
+      errEl.style.display="none"; out.style.display="none";
+      const domain = input.value.trim().toLowerCase();
+      if (!validDomain(domain)) {
+        errEl.textContent = "Please enter a valid domain (e.g., example.com).";
+        errEl.style.display = "block";
+        return;
+      }
+      btn.disabled = true; btn.textContent = "Checking…";
+      try {
+        const url = `${API}?domain=${encodeURIComponent(domain)}&selectors=selector1,selector2`;
+        const r = await fetch(url, { cache:"no-store" });
+        const ct = r.headers.get("content-type") || "";
+        if (!r.ok) { const t = await r.text(); throw new Error(`HTTP ${r.status} — ${t.slice(0,120)}…`); }
+        if (!ct.includes("application/json")) { const t = await r.text(); throw new Error(`Expected JSON but got: ${ct} — ${t.slice(0,120)}…`); }
+
+        const data = await r.json();
+        meta.innerHTML = `Overall: <strong class="${data.overall}">${data.overall}</strong> — scanned ${new Date(data.ts).toLocaleString()}`;
+
+        body.innerHTML = "";
+        data.items.forEach(it => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${esc(it.control)}</td>
+            <td class="${it.status}">${esc(it.status)}</td>
+            <td>${esc(clean(it.detail))}</td>
+            <td>${esc(clean(it.fix||""))}</td>
+          `;
+          body.appendChild(tr);
+        });
+        out.style.display = "block";
+      } catch (e) {
+        errEl.textContent = e.message || "Something went wrong. Please try again.";
+        errEl.style.display = "block";
+      } finally {
+        btn.disabled = false; btn.textContent = "Run check";
+      }
+    });
+  </script>
+</section>
